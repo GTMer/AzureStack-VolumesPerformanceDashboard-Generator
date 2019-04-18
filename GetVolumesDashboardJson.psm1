@@ -38,6 +38,8 @@ param(
     Save-AzureStackVolumesPerformanceDashboardJson -startTime (Get-date("2019-04-01")) -endTime (Get-date("2019-04-08")) -timeGrain "PT1H"
 .Notes
     Author: Azure Stack Azure Monitor Team
+.Link
+    Source Code: https://github.com/GTMer/AzureStack-VolumesPerformanceDashboard-Generator
 #>
 function Save-AzureStackVolumesPerformanceDashboardJson {
     [CmdletBinding(DefaultParameterSetName="relativeTime")]
