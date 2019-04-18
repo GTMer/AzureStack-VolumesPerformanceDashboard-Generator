@@ -1,11 +1,9 @@
 param(
     [CmdletBinding()]
-    [Parameter(Position = 0, Mandatory = $false)]
-    [string]$envName = "AzureStackAdmin",
     [Parameter(Position = 1, Mandatory = $false)]
     [string]$adminSubscriptionName = "Default Provider Subscription" ,
     [Parameter(Position = 2, Mandatory = $false)]
-    [string]$jsonTemplateLocation = "." 
+    [string]$jsonTemplateLocation = ".\templateJson" 
 )
 
 <#
@@ -40,11 +38,12 @@ param(
     Save-AzureStackVolumesPerformanceDashboardJson -startTime (Get-date("2019-04-01")) -endTime (Get-date("2019-04-08")) -timeGrain "PT1H"
 .Notes
     Author: Azure Stack Azure Monitor Team
-    To developers: You can export inner functions in this psm1 file for advanced usage.
 #>
 function Save-AzureStackVolumesPerformanceDashboardJson {
     [CmdletBinding(DefaultParameterSetName="relativeTime")]
     param (
+        [Parameter(Mandatory = $false)]
+        [System.Object]$DefaultProfile,
         [Parameter(ParameterSetName="relativeTime")]
         [ValidateSet('PT30M', 'PT4H', 'PT12H', 'P1D', 'P2D', 'P3D', 'P7D', 'P30D')]
         [string]$duration = 'P1D',
@@ -58,6 +57,19 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
         [Parameter(Mandatory = $false)]
         [string]$outputLocation = '.'
     )
+
+    # If user do not input DefaultProfile
+    if ($null -eq $DefaultProfile) {
+        $script:context = Get-AzureRmContext | Where-Object { $_.Name.Contains($adminSubscriptionName)} | Select-Object -first 1
+    }
+    else {
+        $script:context = $DefaultProfile.Context
+    }
+    
+    # if user hadn't added and login to AzureRmEnvironment, exit
+    if ($null -eq $script:context.Account) {
+        throw "Please login in AzureRm account first."
+    }
 
     if ((Test-Path -Path $outputLocation) -eq $false) {
         throw "Output location not exist."
@@ -103,17 +115,17 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
             throw ("StartTime should less than Now!")
         }
         $description += "startTime: $($startTime.ToString('o'));  `nendTime: $($endTime.ToString('o'));  `n"
-        @("Throughput", "Count", "Latency") | ForEach-Object {
-            Get-DashboardVolumesJson -metricType $_ -startTime $startTime.ToString('o') -endTime $endTime.ToString('o') -timeGrain $timeGrain -description $description -resourceId $resourceId -volumes $volumes |
-                ConvertTo-Json -Depth 100 > $($outputLocation.TrimEnd('\') + '\' + $_ + "VolumesDashboard_customTime.json")
+        @("ObjStore", "Infrastructure", "VmTemp") | ForEach-Object {
+            Get-DashboardVolumesJson -volumeType $_ -startTime $startTime.ToString('o') -endTime $endTime.ToString('o') -timeGrain $timeGrain -description $description -resourceId $resourceId -volumes $volumes |
+                ConvertTo-Json -Depth 100 > $($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_customTime.json")
         }
     }
     else {
         $description += "duration: $duration;  `n"
         $durationTotalMilliseconds = ([System.Xml.XmlConvert]::ToTimeSpan($duration)).TotalMilliseconds
-        @("Throughput", "Count", "Latency") | ForEach-Object {
-            Get-DashboardVolumesJson -metricType $_ -duration $durationTotalMilliseconds -timeGrain $timeGrain -description $description -resourceId $resourceId -volumes $volumes |
-                ConvertTo-Json -Depth 100 > $($outputLocation.TrimEnd('\') + '\' + $_ + "VolumesDashboard_"  + $duration + ".json")
+        @("ObjStore", "Infrastructure", "VmTemp") | ForEach-Object {
+            Get-DashboardVolumesJson -duration $durationTotalMilliseconds -timeGrain $timeGrain -description $description -resourceId $resourceId -volumes $volumes -volumeType $_ |
+                ConvertTo-Json -Depth 100 > $($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_"  + $duration + ".json")
         }
     }
 }
@@ -138,8 +150,8 @@ function Send-Request()
             'Authorization'="Bearer " + $token.AccessToken
     }
     
-    $armEndpoint =  $env.Resourcemanagerurl 
-    $url = $armEndpoint + $endpoint
+    $armEndpoint =  $context.Environment.ResourceManagerUrl
+    $url = $armEndpoint.TrimEnd('/') + '/' + $endpoint
     return Invoke-WebRequest -Uri $url -Headers $header -Method Get
 }
 
@@ -149,10 +161,8 @@ function Get-AzureStackResourceId {
     )
     try {
         Write-Host "Getting resource Id from AzureRmSubscription."
-        $tenantId = (Get-AzureRmTenant | Where-Object { ([System.Uri]$env.ActiveDirectoryServiceEndpointResourceId).Host.Contains($_.Diretory) } | Select-Object -first 1).Id
-        $adminSubscription = Get-AzureRmSubscription -SubscriptionName $adminSubscriptionName -TenantId $tenantId -ErrorAction Stop -Verbose
-        $adminSubscription | Select-AzureRmSubscription -ErrorAction Stop | Out-Host
-        $location = Get-AzureRmLocation -ErrorAction Stop -Verbose
+        $adminSubscription = $script:context.Subscription
+        $location = Get-AzureRmLocation -DefaultProfile $script:context -ErrorAction Stop -Verbose
     }
     catch {
         Write-Error $_
@@ -195,6 +205,8 @@ function Get-volumesByType {
         [Parameter(Mandatory = $false)]
         [array]$volumeTypes = @("ObjStore", "Infrastructure", "VmTemp")
     )
+    Write-Host "Analyzing volumes data."
+
     if ($volumes.Count -eq 0) {
         return
     }
@@ -220,15 +232,12 @@ function Get-volumesByType {
     $volumesByType
 }
 
-function Get-DashboardVolumesJson {
-    [CmdletBinding(DefaultParameterSetName="relativeTime")]
+function Initialize-TilePsCustomObject {
+    [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $false)]
-        [string]$resourceId = ( Get-AzureStackResourceId ),
-        [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
-        [array]$volumes = ( Get-AzureStackVolumes -resourceId $resourceId ),
-        [Parameter(Mandatory = $false)]
-        [array]$volumeTypes = @("ObjStore", "Infrastructure", "VmTemp"),
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Throughput", "Count", "Latency", "Capacity")]
+        [string]$metricType,
         [Parameter(ParameterSetName="relativeTime")]
         [Double]$duration = 86400000,
         [Parameter(ParameterSetName="absoluteTime")]
@@ -237,46 +246,17 @@ function Get-DashboardVolumesJson {
         [string]$endTime,
         [Parameter(Mandatory = $false)]
         [string]$timeGrain = "PT15M",
-        [Parameter(Mandatory = $false)]
-        [ValidateSet("Throughput", "Count", "Latency")]
-        [string]$metricType = "Throughput",
-        [Parameter(Mandatory = $false)]
-        [string]$description = ""
+        [Parameter(Mandatory = $true)]
+        [string]$resourceId
     )
 
-    if ($volumes.Count -eq 0) {
-        return
+    if ($metricType -eq "Capacity") {
+        $tileTemplate = $Script:capacityTemplate.Replace("<resourceIdToBeReplaced>", '/' + $resourceId) | ConvertFrom-Json
+    }
+    else {
+        $tileTemplate = $Script:tileTemplate.Replace("<resourceIdToBeReplaced>", '/' + $resourceId) | ConvertFrom-Json
     }
 
-    $volumesByType = @{}
-
-    $volumeTypes | ForEach-Object {
-        $volumesByType.$_ = New-Object 'Collections.Generic.List[Tuple[String,String]]'
-    }
-
-    $volumes | ForEach-Object {
-        $labelPrefix = [regex]::match($_.properties.volumeLabel, '(.*)_.*').Groups[1].Value
-        if ($volumeTypes.Contains($labelPrefix)) {
-            $volumeLocalName = [regex]::match($_.properties.volumeLocalName, '.*\/(.*)').Groups[1].Value
-            $volumesByType.$labelPrefix.add([Tuple]::Create($volumeLocalName, $_.properties.volumeLabel))
-        }
-    }
-
-    $volumeTypes | ForEach-Object {
-        $volumesByType.$_ = $volumesByType.$_ | Sort-Object Item2
-    }
-
-    Write-Host "Generating dashboard json."
-
-    # change dashboard title/name 
-    $dashboardBody = $Script:dashboardBody.Replace("<resourceIdToBeReplaced>", '/' + $resourceId) | ConvertFrom-Json
-    $dashboardBody.name = $dashboardBody.tags."hidden-title" = "Volumes Operation " + $metricType
-
-    #size of tile
-    $tileColSpan = 6
-    $tileRowSpan = 4
-
-    $tileTemplate = $Script:tileTemplate.Replace("<resourceIdToBeReplaced>", '/' + $resourceId) | ConvertFrom-Json
     # set tile size
     $tileTemplate.position.colSpan = $tileColSpan
     $tileTemplate.position.rowSpan = $tileRowSpan
@@ -298,9 +278,33 @@ function Get-DashboardVolumesJson {
     $templateChart.itemDataModel.appliedISOGrain = $templateChart.timeContext.options.appliedISOGrain = $timeGrain
     $templateChart.timeContext.options.grain = $chartGrainMap.$timeGrain
 
+    $tileTemplate
+}
+
+function Get-TilePsCustomObject { 
+    param (
+        [Parameter(Mandatory = $true)]
+        [psCustomObject]$tileTemplate,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Throughput", "Count", "Latency", "Capacity")]
+        [string]$metricType,
+        [Parameter(Mandatory = $true)]
+        [string]$tileName,
+        [Parameter(Mandatory = $true)]
+        [string]$filterVolumeName,
+        [Parameter(Mandatory = $true)]
+        [int]$positionX,
+        [Parameter(Mandatory = $true)]
+        [int]$positionY
+    )
+
+    # deep copy
+    $tileTemplate = $tileTemplate | ConvertTo-Json -Depth 100 | ConvertFrom-Json
+
+    $templateChart = $tileTemplate.metadata.inputs[0].value.charts[0]
 
     #change aggregation type
-    $aggregationTypeofMetric = @{'Throughput' = 'Sum'; 'Count' = 'Sum'; 'Latency' = 'Avg'}
+    $aggregationTypeofMetric = @{'Throughput' = 'Sum'; 'Count' = 'Sum'; 'Latency' = 'Avg'; 'Capacity' = 'Sum'}
     $aggregationType = $aggregationTypeofMetric.$metricType
     if ($aggregationType -eq "Sum") {
         $templateChart.metrics | ForEach-Object { $_.aggregationType = 4 }
@@ -311,34 +315,107 @@ function Get-DashboardVolumesJson {
         $templateChart.itemDataModel.metrics | ForEach-Object {$_.metricAggregation = 4 }
     }
 
-    #change metrics name 
-    $templateChart.metrics[0].name = $templateChart.itemDataModel.metrics[0].id.name.id = "VolumeOperations" + $( if ($metricType -eq "Count") {""} else {$metricType} ) + "Read"
-    $templateChart.metrics[1].name = $templateChart.itemDataModel.metrics[1].id.name.id = "VolumeOperations" + $( if ($metricType -eq "Count") {""} else {$metricType} ) + "Write"
-    $templateChart.itemDataModel.metrics[0].id.name.displayName = $metricType + "Read"
-    $templateChart.itemDataModel.metrics[1].id.name.displayName = $metricType + "Write"
+    switch ($metricType) {
+        Capacity { 
+            
+        }
+        Default {
+            #change metrics name 
+            $templateChart.metrics[0].name = $templateChart.itemDataModel.metrics[0].id.name.id = "VolumeOperations" + $( if ($metricType -eq "Count") {""} else {$metricType} ) + "Read"
+            $templateChart.metrics[1].name = $templateChart.itemDataModel.metrics[1].id.name.id = "VolumeOperations" + $( if ($metricType -eq "Count") {""} else {$metricType} ) + "Write"
+            $templateChart.itemDataModel.metrics[0].id.name.displayName = $metricType + "Read"
+            $templateChart.itemDataModel.metrics[1].id.name.displayName = $metricType + "Write"
+        }
+    }
+    
 
-    # set markDown board content
-    $dashboardBody.properties.lenses."0".parts."0".metadata.settings.content.settings.content += $aggregationType + " Volume Operations " + $metricType + " by  `n" + $description
+    #change tile name
+    $templateChart.title = $templateChart.itemDataModel.title = $tileName
 
-    # the tile of total performance
-    $tileJson = $tileTemplate | ConvertTo-Json -depth 100 | ConvertFrom-Json
-    $tileJson.metadata.inputs[0].value.charts[0].itemDataModel.psobject.properties.remove("filters")
-    $dashboardBody.properties.lenses."0".parts | Add-Member -MemberType NoteProperty -Name "1" -Value $tileJson
+    #change filter
+    $templateChart.itemDataModel.filters.OperandFilters[0].OperandSelectedValues[0] = $filterVolumeName
+
+    # change position
+    $tileTemplate.position.x = $positionX
+    $tileTemplate.position.Y = $positionY
+    
+    $tileTemplate
+}
+
+function Get-DashboardVolumesJson {
+    [CmdletBinding(DefaultParameterSetName="relativeTime")]
+    param (
+        [Parameter(Mandatory = $false)]
+        [string]$resourceId = ( Get-AzureStackResourceId ),
+        [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
+        [array]$volumes = ( Get-AzureStackVolumes -resourceId $resourceId ),
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("ObjStore", "Infrastructure", "VmTemp")]
+        [string]$volumeType = "ObjStore",
+        [Parameter(ParameterSetName="relativeTime")]
+        [Double]$duration = 86400000,
+        [Parameter(ParameterSetName="absoluteTime")]
+        [string]$startTime,
+        [Parameter(ParameterSetName="absoluteTime")]
+        [string]$endTime,
+        [Parameter(Mandatory = $false)]
+        [string]$timeGrain = "PT15M",
+        
+        [Parameter(Mandatory = $false)]
+        [string]$description = ""
+    )
+
+    if ($volumes.Count -eq 0) {
+        return
+    }
+
+    $volumesByType = Get-volumesByType -resourceId $resourceId -volumes $volumes
+
+    Write-Host "Generating dashboard json."
+
+    
+    $dashboardBody = $Script:dashboardBody.Replace("<resourceIdToBeReplaced>", '/' + $resourceId) | ConvertFrom-Json
+
+    # change dashboard title/name 
+    $dashboardBody.name = $dashboardBody.tags."hidden-title" = "Volumes Operation Performance" 
+    
+    $Templates = @{}
+    $metricTypes | ForEach-Object {
+        if ($PSCmdlet.ParameterSetName -eq "relativeTime") {
+            $Templates[$_] = Initialize-TilePsCustomObject -metricType $_ -duration $duration -timeGrain $timeGrain -resourceId $resourceId   
+        }
+        else {
+            $Templates[$_] = Initialize-TilePsCustomObject -metricType $_ -startTime $startTime -endTime $endTime -timeGrain $timeGrain -resourceId $resourceId 
+        }
+    }
+
+    # deprecated tiles
+        # set markDown board content
+        # $dashboardBody.properties.lenses."0".parts."0".metadata.settings.content.settings.content += $aggregationType + " Volume Operations " + $metricType + " by  `n" + $description
+
+        # the tile of total performance
+        # $tileJson = $tileTemplate | ConvertTo-Json -depth 100 | ConvertFrom-Json
+        # $tileJson.metadata.inputs[0].value.charts[0].itemDataModel.psobject.properties.remove("filters")
+        # $dashboardBody.properties.lenses."0".parts | Add-Member -MemberType NoteProperty -Name "1" -Value $tileJson
+
+    $dashboardBody.properties.lenses."0".parts = [PSCustomObject]@{}    
 
     # create tiles
-    for ($($rowNum = 0; $tileNum = 2); $rowNum -lt $volumeTypes.Count; $rowNum++) {   
-        $tileTemplate.position.x = $tileColSpan * ($rowNum + 1)
-        for ($colNum = 0; $colNum -lt $volumesByType.($volumeTypes[$rowNum]).Count; $colNum++) {
-            $tileName = $volumesByType.($volumeTypes[$rowNum])[$colNum].Item2
-            $tileJson = $tileTemplate | ConvertTo-Json -depth 100 | ConvertFrom-Json
-            $tileJson.position.y = $tileRowSpan * $colNum
-            $chart = $tileJson.metadata.inputs[0].value.charts[0]
-            $chart.title = $chart.itemDataModel.title = $tileName
-            $chart.itemDataModel.filters.OperandFilters[0].OperandSelectedValues[0] = $volumesByType.($volumeTypes[$rowNum])[$colNum].Item1         
-            $dashboardBody.properties.lenses."0".parts | Add-Member -MemberType NoteProperty -Name $tileNum -Value $tileJson
+    for ($($rowNum = 0; $tileNum = 0); $rowNum -lt $volumesByType.$volumeType.Count; $rowNum++) {   
+        $positionY = $tileRowSpan * $rowNum
+        for ($colNum = 0; $colNum -lt $metricTypes.Count; $colNum++) {
+            $posotionX = $tileColSpan * $colNum
+            $thisMetricType = $metricTypes[$colNum]
+            $tileName = $volumesByType.$volumeType[$rowNum].Item2 + " " + $( if ($thisMetricType -eq "Count") {"Operation"} else {""} ) + $metricTypes[$colNum]
+            $filterVolumeName = $( if ($thisMetricType -eq "Capacity") { $volumesByType.$volumeType[$rowNum].Item2 } else { $volumesByType.$volumeType[$rowNum].Item1 } )
+            
+            $tileJsonObj = Get-TilePsCustomObject -tileTemplate $Templates[$metricTypes[$colNum]] -tileName $tileName -positionX $posotionX -positionY $positionY -filterVolumeName $filterVolumeName -metricType $thisMetricType
+            # $chart.itemDataModel.filters.OperandFilters[0].OperandSelectedValues[0] = $volumesByType.($volumeTypes[$rowNum])[$colNum].Item1         
+            $dashboardBody.properties.lenses."0".parts | Add-Member -MemberType NoteProperty -Name $tileNum -Value $tileJsonObj
             $tileNum++
         }        
     }
+
     $dashboardBody 
 }
 
@@ -357,18 +434,26 @@ function Save-DashboardVolumesJson {
 }
 
 #========Module Initalize========#
-$env = Get-AzureRmEnvironment -Name $envName
-$context = Get-AzureRmContext 
+$context = $null
+
+#size of tile
+$tileColSpan = 6
+$tileRowSpan = 4
+
+# If you want to add new metrics, adapt function Initialize-TilePsCustomObject and Get-TilePsCustomObject, then register here 
+$metricTypes = @('Throughput', 'Count', 'Latency', 'Capacity')
 
 if (!((Test-Path -Path ($jsonTemplateLocation.TrimEnd('\') + '\dashboardBody.json'))  -and  (Test-Path -Path ($jsonTemplateLocation.TrimEnd('\') + '\tileTemplate.json' )))) {
-    throw "Output location not exist."
+    throw "Template location not exist."
 }
-$dashboardBody = Get-Content ($jsonTemplateLocation.TrimEnd('\') + '\dashboardBody.json') | Out-String 
-$tileTemplate = Get-Content ($jsonTemplateLocation.TrimEnd('\') + '\tileTemplate.json') | Out-String 
-
-# if user hadn't added and login to AzureRmEnvironment, exit
-if ($null -eq $context.Account) {
-    throw "Please login in AzureRm account first."
+try {
+    $dashboardBody = Get-Content ($jsonTemplateLocation.TrimEnd('\') + '\dashboardBody.json') | Out-String 
+    $tileTemplate = Get-Content ($jsonTemplateLocation.TrimEnd('\') + '\tileTemplate.json') | Out-String 
+    $capacityTemplate = Get-Content ($jsonTemplateLocation.TrimEnd('\') + '\capacityTemplate.json') | Out-String 
+}
+catch {
+    Write-Error $_
+    throw "Template not exist"
 }
 
 Export-ModuleMember Save-AzureStackVolumesPerformanceDashboardJson
