@@ -1,9 +1,23 @@
 param(
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="relativeTime")]
     [Parameter(Position = 1, Mandatory = $false)]
     [string]$adminSubscriptionName = "Default Provider Subscription" ,
     [Parameter(Position = 2, Mandatory = $false)]
-    [string]$jsonTemplateLocation = ".\templateJson" 
+    [string]$jsonTemplateLocation = ".\templateJson" ,
+    [Parameter(Mandatory = $false)]
+    [System.Object]$DefaultProfile,
+    [Parameter(ParameterSetName="relativeTime")]
+    [ValidateSet('PT30M', 'PT4H', 'PT12H', 'P1D', 'P2D', 'P3D', 'P7D', 'P30D')]
+    [string]$duration = 'P1D',
+    [Parameter(Mandatory=$True, ParameterSetName="absoluteTime", HelpMessage="Please enter the start time of time range you want to see.")]
+    [datetime]$startTime,
+    [Parameter(Mandatory=$True, ParameterSetName="absoluteTime", HelpMessage="Please enter the end time of time range you want to see.")]
+    [datetime]$endTime,
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('Automatic', 'PT1M', 'PT1H', 'P1D', 'PT5M', 'PT15M', 'PT30M', 'PT6H', 'PT12H')]
+    [string]$timeGrain = 'Automatic',
+    [Parameter(Mandatory = $false)]
+    [string]$outputLocation = '.'
 )
 
 <#
@@ -62,7 +76,7 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
 
     # If user do not input DefaultProfile
     if ($null -eq $DefaultProfile) {
-        $script:context = Get-AzureRmContext | Where-Object { $_.Name.Contains($adminSubscriptionName)} | Select-Object -first 1
+        $script:context = Get-AzureRmContext -ListAvailable | Where-Object { $_.Name.Contains($adminSubscriptionName)} | Select-Object -first 1
     }
     else {
         $script:context = $DefaultProfile.Context
@@ -77,8 +91,8 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
         throw "Output location not exist."
     }
     
-    $resourceId = Get-AzureStackResourceId
-    $volumes = Get-AzureStackVolumes -resourceId $resourceId
+    # $resourceId = Get-AzureStackResourceId
+    $volumes = Get-AzureStackVolumes 
 
     if ($timeGrain -eq 'Automatic') {
         if ($PSCmdlet.ParameterSetName -eq "absoluteTime") {
@@ -118,43 +132,20 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
         }
         $description += "startTime: $($startTime.ToString('o'));  `nendTime: $($endTime.ToString('o'));  `n"
         @("ObjStore", "Infrastructure", "VmTemp") | ForEach-Object {
-            Get-DashboardVolumesJson -volumeType $_ -startTime $startTime.ToString('o') -endTime $endTime.ToString('o') -timeGrain $timeGrain -description $description -resourceId $resourceId -volumes $volumes |
+            Get-DashboardVolumesJson -volumeType $_ -startTime $startTime.ToString('o') -endTime $endTime.ToString('o') -timeGrain $timeGrain -description $description -volumes $volumes |
                 ConvertTo-Json -Depth 100 > $($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_customTime.json")
+            Write-Host "$($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_customTime.json") finished."
         }
     }
     else {
         $description += "duration: $duration;  `n"
         $durationTotalMilliseconds = ([System.Xml.XmlConvert]::ToTimeSpan($duration)).TotalMilliseconds
         @("ObjStore", "Infrastructure", "VmTemp") | ForEach-Object {
-            Get-DashboardVolumesJson -duration $durationTotalMilliseconds -timeGrain $timeGrain -description $description -resourceId $resourceId -volumes $volumes -volumeType $_ |
+            Get-DashboardVolumesJson -duration $durationTotalMilliseconds -timeGrain $timeGrain -description $description -volumes $volumes -volumeType $_ |
                 ConvertTo-Json -Depth 100 > $($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_"  + $duration + ".json")
+            Write-Host "$($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_"  + $duration + ".json") finished."
         }
     }
-}
-
-function Send-Request()
-{
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$endpoint
-    )
-    $tokens = @()
-    $tokens += try { [Microsoft.IdentityModel.Clients.ActiveDirectory.TokenCache]::DefaultShared.ReadItems()        } catch {}
-    $tokens += try { [Microsoft.Azure.Commands.Common.Authentication.AzureSession]::Instance.TokenCache.ReadItems() } catch {}
-    $token = $tokens |
-        Where-Object DisplayableId -eq $context.Account.Id |
-        Sort-Object ExpiresOn |
-        Select-Object -Last 1
-
-    $header = @{
-            'Content-Type'='application\json'
-            'Authorization'="Bearer " + $token.AccessToken
-    }
-    
-    $armEndpoint =  $context.Environment.ResourceManagerUrl
-    $url = $armEndpoint.TrimEnd('/') + '/' + $endpoint
-    return Invoke-WebRequest -Uri $url -Headers $header -Method Get
 }
 
 function Get-AzureStackResourceId {
@@ -176,19 +167,15 @@ function Get-AzureStackResourceId {
 function Get-AzureStackVolumes {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
-        [string]$resourceId = ( Get-AzureStackResourceId )
     )
     try {
         Write-Host "Getting volumes data from ARM."
-        $res = Send-Request $resourceId/scaleUnits/?api-version=2016-05-01
-        $scaleUnits = $($res.Content | ConvertFrom-Json).value
 
-        $res = Send-Request $resourceId/scaleUnits/$($scaleUnits.name.Split('/')[-1])/storageSubSystems?api-version=2018-10-01
-        $subsystems = $($res.Content | ConvertFrom-Json).value
-
-        $res = Send-Request $resourceId/scaleUnits/$($scaleUnits.name.Split('/')[-1])/storageSubSystems/$($subsystems.name.Split('/')[-1])/volumes?api-version=2018-10-01
-        $volumes = $($res.Content | ConvertFrom-Json).value
+        $location = Get-AzureRmLocation -DefaultProfile $script:context -ErrorAction Stop -Verbose
+        $location = $location.Location
+        $scaleUnits = Get-AzureRmResource -DefaultProfile $script:context -ResourceName $location -ResourceType Microsoft.Fabric.Admin/fabricLocations/scaleunits -ResourceGroupName "System.$($location)" -ApiVersion "2016-05-01"
+        $sotrageSubSystems = Get-AzureRmResource -DefaultProfile $script:context -ResourceName $scaleUnits.Name -ResourceType Microsoft.Fabric.Admin/fabricLocations/scaleunits/storageSubSystems -ResourceGroupName "System.$($location)" -ApiVersion "2018-10-01"
+        $volumes = Get-AzureRmResource -DefaultProfile $script:context -ResourceName $sotrageSubSystems.Name -ResourceType Microsoft.Fabric.Admin/fabricLocations/scaleunits/storageSubSystems/volumes -ResourceGroupName "System.$($location)" -ApiVersion "2018-10-01"
     }
     catch {
         Write-Error $_.ToString()
@@ -197,13 +184,15 @@ function Get-AzureStackVolumes {
     $volumes
 }
 
+<#
+.SYNOPSIS
+    Transform volumes into dictionary of list of tuple to show volume name namemaps, eg: $volumesByType["ObjStore"][2] = Tupe["Volume11", "Obj_store2"] .
+#>
 function Get-volumesByType {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
-        [string]$resourceId = ( Get-AzureStackResourceId ),
-        [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
-        [array]$volumes = ( Get-AzureStackVolumes -resourceId $resourceId ),
+        [array]$volumes = ( Get-AzureStackVolumes ),
         [Parameter(Mandatory = $false)]
         [array]$volumeTypes = @("ObjStore", "Infrastructure", "VmTemp")
     )
@@ -234,6 +223,10 @@ function Get-volumesByType {
     $volumesByType
 }
 
+<#
+.SYNOPSIS
+    Transform template json into PsCustomObject.
+#>
 function Initialize-TilePsCustomObject {
     [CmdletBinding()]
     param (
@@ -283,6 +276,10 @@ function Initialize-TilePsCustomObject {
     $tileTemplate
 }
 
+<#
+.SYNOPSIS
+    Get individual tile PsCustomObjects.
+#>
 function Get-TilePsCustomObject { 
     param (
         [Parameter(Mandatory = $true)]
@@ -329,7 +326,6 @@ function Get-TilePsCustomObject {
             $templateChart.itemDataModel.metrics[1].id.name.displayName = $metricType + "Write"
         }
     }
-    
 
     #change tile name
     $templateChart.title = $templateChart.itemDataModel.title = $tileName
@@ -344,13 +340,15 @@ function Get-TilePsCustomObject {
     $tileTemplate
 }
 
+<#
+.SYNOPSIS
+    Get dashboard json in PsCustomObject format.
+#>
 function Get-DashboardVolumesJson {
     [CmdletBinding(DefaultParameterSetName="relativeTime")]
     param (
-        [Parameter(Mandatory = $false)]
-        [string]$resourceId = ( Get-AzureStackResourceId ),
         [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
-        [array]$volumes = ( Get-AzureStackVolumes -resourceId $resourceId ),
+        [array]$volumes = ( Get-AzureStackVolumes ),
         [Parameter(Mandatory = $false)]
         [ValidateSet("ObjStore", "Infrastructure", "VmTemp")]
         [string]$volumeType = "ObjStore",
@@ -371,15 +369,15 @@ function Get-DashboardVolumesJson {
         return
     }
 
-    $volumesByType = Get-volumesByType -resourceId $resourceId -volumes $volumes
+    $volumesByType = Get-volumesByType -volumes $volumes
 
     Write-Host "Generating dashboard json."
 
-    
+    $resourceId = ( Get-AzureStackResourceId )
     $dashboardBody = $Script:dashboardBody.Replace("<resourceIdToBeReplaced>", '/' + $resourceId) | ConvertFrom-Json
 
     # change dashboard title/name 
-    $dashboardBody.name = $dashboardBody.tags."hidden-title" = "Volumes Operation Performance" 
+    $dashboardBody.name = $dashboardBody.tags."hidden-title" = $volumeType + " Volumes Operation Performance" 
     
     $Templates = @{}
     $metricTypes | ForEach-Object {
@@ -421,20 +419,6 @@ function Get-DashboardVolumesJson {
     $dashboardBody 
 }
 
-function Save-DashboardVolumesJson {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $false)]
-        [string]$resourceId =  (Get-AzureStackResourceId) ,
-        [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
-        [array]$volumes = (Get-AzureStackVolumes -resourceId $resourceId),
-        [Parameter(Mandatory = $false)]
-        [string]$OutputFileName = "VolumesDashboard.json"
-    )
-    Write-Host $resourceId
-    Get-DashboardVolumesJson -volumes $volumes | ConvertTo-Json -Depth 100 > $OutputFileName
-}
-
 #========Module Initalize========#
 $context = $null
 
@@ -458,4 +442,9 @@ catch {
     throw "Template not exist"
 }
 
-Export-ModuleMember Save-AzureStackVolumesPerformanceDashboardJson
+if ($PSCmdlet.ParameterSetName -eq "absoluteTime") {
+    Save-AzureStackVolumesPerformanceDashboardJson -DefaultProfile $DefaultProfile -startTime $startTime -endTime $endTime -timeGrain $timeGrain -outputLocation $outputLocation
+}
+else {
+    Save-AzureStackVolumesPerformanceDashboardJson -DefaultProfile $DefaultProfile -duration $duration -timeGrain $timeGrain -outputLocation $outputLocation
+}
