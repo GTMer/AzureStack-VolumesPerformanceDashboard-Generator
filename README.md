@@ -1,12 +1,13 @@
 # AzureStack-VolumesPerformanceDashboard-Generator
-This tool is used to generate dashboard jsons showing volumes performance used on Azure Stack portal.
+This tool is used to generate dashboard jsons showing volumes performance used on Azure Stack Admin portal.
+
 <img src="document/demo.png" />
 
 ### Example
 - default json save to spedified location  
 `.\Create-AzSStorageDashboard.ps1 -timeGrain "PT15M" -outputLocation '.' `
 - data of last week with 1 hour interval  
-`.\Create-AzSStorageDashboard.ps1 -duration "P1D" -timeGrain "PT15M"`
+`.\Create-AzSStorageDashboard.ps1 -duration "P7D" -timeGrain "PT1H"`
 - date from 4/1 to 4/8 with 1hr interval  
 `.\Create-AzSStorageDashboard.ps1 -startTime (Get-date("2019-04-01")) -endTime (Get-date("2019-04-08")) -timeGrain "PT1H"`
 

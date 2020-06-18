@@ -133,7 +133,7 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
         $description += "startTime: $($startTime.ToString('o'));  `nendTime: $($endTime.ToString('o'));  `n"
         @("ObjStore", "Infrastructure", "VmTemp") | ForEach-Object {
             Get-DashboardVolumesJson -volumeType $_ -startTime $startTime.ToString('o') -endTime $endTime.ToString('o') -timeGrain $timeGrain -description $description -volumes $volumes |
-                ConvertTo-Json -Depth 100 > $($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_customTime.json")
+                ConvertTo-Json -Depth 100 | Format-Json > $($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_customTime.json")
             Write-Host "$($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_customTime.json") finished."
         }
     }
@@ -142,7 +142,7 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
         $durationTotalMilliseconds = ([System.Xml.XmlConvert]::ToTimeSpan($duration)).TotalMilliseconds
         @("ObjStore", "Infrastructure", "VmTemp") | ForEach-Object {
             Get-DashboardVolumesJson -duration $durationTotalMilliseconds -timeGrain $timeGrain -description $description -volumes $volumes -volumeType $_ |
-                ConvertTo-Json -Depth 100 > $($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_"  + $duration + ".json")
+                ConvertTo-Json -Depth 100 | Format-Json > $($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_"  + $duration + ".json")
             Write-Host "$($outputLocation.TrimEnd('\') + '\' + "DashboardVolume" + $_ + "_"  + $duration + ".json") finished."
         }
     }
@@ -417,6 +417,24 @@ function Get-DashboardVolumesJson {
     }
 
     $dashboardBody 
+}
+
+# Formats JSON in a nicer format than the built-in ConvertTo-Json does.
+# To reduce JSON output file size for 12 and 16 node stamps.
+function Format-Json([Parameter(Mandatory, ValueFromPipeline)][String] $json) {
+    $indent = 0;
+    ($json -Split "`n" | ForEach-Object {
+        if ($_ -match '[\}\]]\s*,?\s*$') {
+            # This line ends with ] or }, decrement the indentation level
+            $indent--
+        }
+        $line = ('  ' * $indent) + $($_.TrimStart() -replace '":  (["{[])', '": $1' -replace ':  ', ': ')
+        if ($_ -match '[\{\[]\s*$') {
+            # This line ends with [ or {, increment the indentation level
+            $indent++
+        }
+        $line
+    }) -Join "`n"
 }
 
 #========Module Initalize========#
