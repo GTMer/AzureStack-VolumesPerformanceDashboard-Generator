@@ -76,7 +76,7 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
 
     # If user do not input DefaultProfile
     if ($null -eq $DefaultProfile) {
-        $script:context = Get-AzureRmContext -ListAvailable | Where-Object { $_.Name.Contains($adminSubscriptionName)} | Select-Object -first 1
+        $script:context = Get-AzureRmContext | Where-Object { $_.Name.Contains($adminSubscriptionName)} | Select-Object -first 1
     }
     else {
         $script:context = $DefaultProfile.Context
