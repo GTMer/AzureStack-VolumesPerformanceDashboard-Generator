@@ -76,7 +76,7 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
 
     # If user do not input DefaultProfile
     if ($null -eq $DefaultProfile) {
-        $script:context = Get-AzureRmContext -ListAvailable | Where-Object { $_.Name.Contains($adminSubscriptionName)} | Select-Object -first 1
+        $script:context = Get-AzureRmContext | Where-Object { $_.Name.Contains($adminSubscriptionName)} | Select-Object -first 1
     }
     else {
         $script:context = $DefaultProfile.Context
@@ -303,7 +303,7 @@ function Get-TilePsCustomObject {
     $templateChart = $tileTemplate.metadata.inputs[0].value.charts[0]
 
     #change aggregation type
-    $aggregationTypeofMetric = @{'Throughput' = 'Sum'; 'Count' = 'Sum'; 'Latency' = 'Avg'; 'Capacity' = 'Sum'}
+    $aggregationTypeofMetric = @{'Throughput' = 'Sum'; 'Count' = 'Sum'; 'Latency' = 'Avg'; 'Capacity' = 'Avg'}
     $aggregationType = $aggregationTypeofMetric.$metricType
     if ($aggregationType -eq "Sum") {
         $templateChart.metrics | ForEach-Object { $_.aggregationType = 4 }
