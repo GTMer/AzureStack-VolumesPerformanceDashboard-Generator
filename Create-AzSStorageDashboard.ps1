@@ -303,7 +303,7 @@ function Get-TilePsCustomObject {
     $templateChart = $tileTemplate.metadata.inputs[0].value.charts[0]
 
     #change aggregation type
-    $aggregationTypeofMetric = @{'Throughput' = 'Sum'; 'Count' = 'Sum'; 'Latency' = 'Avg'; 'Capacity' = 'Sum'}
+    $aggregationTypeofMetric = @{'Throughput' = 'Sum'; 'Count' = 'Sum'; 'Latency' = 'Avg'; 'Capacity' = 'Avg'}
     $aggregationType = $aggregationTypeofMetric.$metricType
     if ($aggregationType -eq "Sum") {
         $templateChart.metrics | ForEach-Object { $_.aggregationType = 4 }
