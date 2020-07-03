@@ -128,21 +128,6 @@ function Save-AzureStackVolumesPerformanceDashboardJson {
     }
     $description = "timeGrain: $timeGrain;  `n"
 
-    switch ($volumeType) {
-        object {
-            $volumeTypes = @("ObjStore")
-        }
-        infrastructure {
-            $volumeTypes = @("Infrastructure")
-        }
-        vmtemp {
-            $volumeTypes = @("VmTemp")
-        }
-        Default {
-            $volumeTypes = @("ObjStore", "Infrastructure", "VmTemp")
-        }
-
-    }
     if ($PSCmdlet.ParameterSetName -eq "absoluteTime") {
         if ($startTime -gt $endTime) {
             throw ("StartTime should less than EndTime!")
@@ -212,9 +197,7 @@ function Get-volumesByType {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
-        [array]$volumes = ( Get-AzureStackVolumes ),
-        [Parameter(Mandatory = $false)]
-        [array]$volumeTypes = @("ObjStore", "Infrastructure", "VmTemp")
+        [array]$volumes = ( Get-AzureStackVolumes )
     )
     Write-Host "Analyzing volumes data."
 
@@ -224,22 +207,6 @@ function Get-volumesByType {
 
     $volumesByType = @{}
 
-    
-    switch ($volumeType) {
-        object {
-            $volumeTypes = @("ObjStore")
-        }
-        infrastructure {
-            $volumeTypes = @("Infrastructure")
-        }
-        vmtemp {
-            $volumeTypes = @("VmTemp")
-        }
-        Default {
-            $volumeTypes = @("ObjStore", "Infrastructure", "VmTemp")
-        }
-
-    }
 
     $volumeTypes | ForEach-Object {
         $volumesByType.$_ = New-Object 'Collections.Generic.List[Tuple[String,String]]'
@@ -505,6 +472,21 @@ if ($capacityOnly -eq $True) {
     $metricTypes = @('Capacity')
 } else {
     $metricTypes = @('Capacity', 'Throughput', 'Count', 'Latency')
+}
+
+switch ($volumeType) {
+    object {
+        $volumeTypes = @("ObjStore")
+    }
+    infrastructure {
+        $volumeTypes = @("Infrastructure")
+    }
+    vmtemp {
+        $volumeTypes = @("VmTemp")
+    }
+    Default {
+        $volumeTypes = @("ObjStore", "Infrastructure", "VmTemp")
+    }
 }
 
 if (!((Test-Path -Path ($jsonTemplateLocation.TrimEnd('\') + '\dashboardBody.json'))  -and  (Test-Path -Path ($jsonTemplateLocation.TrimEnd('\') + '\tileTemplate.json' )))) {
