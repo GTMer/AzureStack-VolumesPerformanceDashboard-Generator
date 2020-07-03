@@ -21,6 +21,13 @@
                                     "aggregationType": 4
                                 },
                                 {
+                                    "name": "VolumeRemainingCapacity",
+                                    "resourceMetadata": {
+                                        "resourceId": "<resourceIdToBeReplaced>"
+                                    },
+                                    "aggregationType": 4
+                                },
+                                {
                                     "name": "VolumeVMDiskUsedCapacity",
                                     "resourceMetadata": {
                                         "resourceId": "<resourceIdToBeReplaced>"
@@ -42,7 +49,7 @@
                                     "aggregationType": 4
                                 }
                             ],
-                            "title": "me Total Capacity (Preview), Sum Volume VM Disk Used Capacity (Preview), and 2 other metrics",
+                            "title": "Avg Volume Total Capacity (Preview), Avg Volume Remaining Capacity (Preview), and 3 other metrics",
                             "timeContext": {
                                 "options": {
                                     "grain": 1,
@@ -72,6 +79,23 @@
                                         },
                                         "metricAggregation": 1,
                                         "color": "#47BDF5"
+                                    },
+                                    {
+                                        "id": {
+                                            "resourceDefinition": {
+                                                "id": "<resourceIdToBeReplaced>"
+                                            },
+                                            "name": {
+                                                "id": "VolumeRemainingCapacity",
+                                                "displayName": "Volume Remaining Capacity (Preview)"
+                                            },
+                                            "dataSource": 1,
+                                            "namespace": {
+                                                "name": "microsoft.fabric.admin/fabriclocations"
+                                            }
+                                        },
+                                        "metricAggregation": 1,
+                                        "color": "#FF1010"
                                     },
                                     {
                                         "id": {
@@ -160,7 +184,7 @@
                                 "yAxisOptions": {
                                     "options": 1
                                 },
-                                "title": "Sum Volume Total Capacity (Preview), Sum Volume VM Disk Used Capacity (Preview), and 2 other metrics",
+                                "title": "Avg Volume Total Capacity (Preview), Avg Volume Remaining Capacity (Preview), and 3 other metrics",
                                 "titleKind": "Auto",
                                 "appliedISOGrain": "PT1H"
                             }
